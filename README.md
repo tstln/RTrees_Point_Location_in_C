@@ -31,7 +31,6 @@ Ressources used : R-Tree implementation provided by Superliminal (http:/superlim
 The project uses **CMake**.
 
 ```bash
-mkdir -p build
 cmake -S . -B build
 cmake --build build
 ```
@@ -68,7 +67,7 @@ gnuplot *.gp
 ```
 This will create files like "visualization_overview.png", "viz_level_0_1.png", etc.
 
-## ⚙️ Configuration
+## Configuration
 
 - **Query Point**: You can change the specific point to search for (displayed in green) by editing "what_query_point.dat" in the root directory.
   - Format: "X Y" (e.g., "0.1 0.1")
