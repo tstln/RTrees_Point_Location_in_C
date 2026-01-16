@@ -1,0 +1,312 @@
+\documentclass[a4paper, 12pt]{report}
+\usepackage[utf8]{inputenc} 
+\usepackage[bitstream-charter]{mathdesign}
+\usepackage[T1]{fontenc}
+\usepackage[english]{babel}
+\usepackage[a4paper, total={7in, 8in}]{geometry}
+\usepackage{graphicx}
+\usepackage{xcolor}
+\usepackage{listings}
+\usepackage[hidelinks]{hyperref}
+
+\hypersetup{
+pdftitle={RTree_Implementation_Report},
+pdfauthor={Thomas Thanh-Long Nguyen},
+urlcolor=black
+}
+
+\title{\textbf{\textsc{\Huge{R-Tree and Point Location}}}\\
+{\large \textsc{Sorbonne Université}}}
+
+\author{Thomas Thanh-Long Nguyen (28626005)}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\chapter*{Introduction}
+\addcontentsline{toc}{chapter}{\textbf{Introduction}}
+
+This project was made within the scope of the \textbf{Algorithm and Data Structures (4MA316)} course at \textbf{Sorbonne Université}, taught by Didier Smets and Ani Miraci.
+
+The project involves implementing an R-Tree data structure in C to efficiently handle spatial queries on a 2D mesh. The primary objective is to optimize the search for a triangle containing a specific query point $(x, y)$.
+
+With a basic approach, finding a containing triangle requires checking every single triangle in the mesh. We could call this the Naive search, that has a $O(N)$ time complexity. The R-Tree search improves this by using a hierarchy of bounding boxes (Minimum Bounding Rectangles, MBR) to narrow down the search space, achieving a logarithmic average search time complexity, $O(\log N)$. 
+
+This data structure has been introduced in 1984 by Antonin Guttman (\url{http://www-db.deis.unibo.it/courses/SI-LS/papers/Gut84.pdf}).
+
+\vspace{0.5cm}
+\noindent\textbf{Acknowledgements}: I would like to thank my teachers for their guidance and for providing the necessary resources and foundations to carry out this project. 
+
+\vspace{0.5cm}
+\noindent\textbf{Contact}: \\
+nguyen\_thomas\_t-l@hotmail.com \\
+thomas.nguyen@etu.sorbonne-universite.fr
+\vspace{1cm}
+
+\tableofcontents
+
+\chapter{What is an R-Tree?}
+\section{Concept}
+An R-Tree is a tree data structure used for spatial access methods, i.e. for indexing multi-dimensional information such as geographical coordinates, rectangles or polygons. A common use case is storing geospatial coordinates.
+
+\section{Structure}
+The minimal bounding rectangle (MBR) is the key concept. It represents the smallest axis-aligned rectangle that completely contains a given object (such as a triangle) or a set of objects. In an R-Tree, these boxes are used to approximate the shape of data, allowing for rapid exclusion of irrelevant branches during a search.
+\begin{itemize}
+    \item \textbf{Leaf Nodes}: Contain pointers to the actual data objects (in our case, Triangle IDs).
+    \item \textbf{Internal Nodes}: Contain pointers to child nodes and a bounding box covering all rectangles in the child nodes.
+    \item \textbf{Root}: The top-level node covering the entire dataset.
+\end{itemize}
+The key idea is that "nearby" objects are grouped together, allowing queries to quickly filter out large portions of the data that do not intersect the query region.
+
+
+\chapter{Implementation and Results}
+\section{Mesh Loading}
+We parse \texttt{.mesh} files (Medit format) to extract vertices and triangles. This data serves as the foundation for our spatial index.
+
+For handling mesh operations, we integrated the mesh library from \textbf{TP3} from the course (provided by Didier Smets). This library provides the necessary data structures (\texttt{Mesh}, \texttt{Vertex}, \texttt{Triangle}) and functions to efficiently parse and load \texttt{.mesh} files.
+
+\section{R-Tree Construction}
+The construction algorithm proceeds as follows:
+\begin{enumerate}
+    \item \textbf{Bounding Boxes}: For each triangle, we have to compute its minimal bounding rectangle. Instead we compute its minimal Axis-Aligned Bounding Box (AABB). We strictly use AABBs (defined by min/max X and Y) rather than arbitrary oriented rectangles because their intersection tests are significantly faster computationally ($O(1)$ comparisons). While they may fit the triangles less tightly than oriented boxes, the speed gain in the R-Tree logic outweighs the slight increase in overlap.
+    \item \textbf{Recursive Insertion}: We insert these rectangles into the R-Tree.
+    \item \textbf{Splitting}: When a node exceeds its capacity (also called max branching factor), it splits.
+\end{enumerate}
+
+
+\section{Library Source}
+We utilized the R-Tree implementation provided by \textbf{Superliminal} (\url{http://superliminal.com/sources/}), as suggested by our teachers.
+
+One of the reasons this library is interesting is because it is made to be memory efficient. For instance, for the splitting process we mentionned the need to define the capacity of a node (max branching factor, \texttt{MAXCARD}), in that library it is determined such that each node fits exactly inside a single memory page of the machine (\texttt{PGSIZE}, typically 512 bytes in this implementation). The maximum number of branches is calculated by taking the page size, subtracting the node header (two integers: count and level), and dividing by the size of a \texttt{Branch} structure:
+\[
+\texttt{MAXCARD} = \frac{\texttt{PGSIZE} - 2 \times \textrm{sizeof}(\texttt{int})}{\textrm{sizeof}(\texttt{Branch})}
+\]
+This ensures that each node fits within a page, optimizing memory access.
+\[
+\texttt{MAXCARD} = \frac{512 - 2 \times 4}{24} = \frac{504}{24} = 21
+\]
+where $\texttt{PGSIZE}=512$ bytes, $\textrm{sizeof}(\texttt{int})=4$ bytes, and $\textrm{sizeof}(\texttt{Branch})=24$ bytes (16 bytes for \texttt{Rect} + 8 bytes for \texttt{Node*}).
+
+
+\section{Modifications to the Library}
+We adapted the library to our needs for it to compile with our code:
+\begin{itemize}
+    \item Added a lot of comments on top of the comments already there, to help ourselves understanding the code. Theses comments are indicated with "Ed." as for "Editor's Note".
+    \item Used \texttt{intptr\_t} instead of \texttt{int} in the code for casting pointers to integers (ID storage). We had problems with the fact that pointers are 8 bytes on 64bit architecture and 4 bytes on 32bit architecture, while \texttt{int} is 4 bytes on both.
+\end{itemize}
+
+\section{Split Strategy: Linear vs. Quadratic}
+The library provides two node splitting algorithms:
+\begin{itemize}
+    \item \textbf{Linear Split} ($O(N)$): Selects two seeds that are furthest apart along each dimension, then distributes the remaining entries. It is fast but may produce less optimal trees with more overlap.
+    \item \textbf{Quadratic Split} ($O(N^2)$): Compares all pairs of entries to find the two that would waste the most area if put in the same group (the worst seeds). It then distributes the rest based on area expansion criteria.
+\end{itemize}
+
+\textbf{Choice}: We chose the \textbf{Quadratic Split} (default in our build) because it typically produces a tree with less overlap, leading to faster query performance ($O(\log N)$) at the cost of slightly slower build time. Since we build the tree once and query it many times, this is the optimal trade-off.
+
+
+\section{Search Algorithm}
+The search for a single point $P=(x,y)$ starts at the root and descends down to finding the exact triangle index. The mesh used for testing is \texttt{mesh2-tp2.mesh} from the \textbf{TP2} of the course.
+
+\textbf{Algorithm Steps}:
+\begin{enumerate}
+    \item Start at the R-Tree root.
+    \item Iterate through all entries (child nodes or leaves) in the current node.
+    \item If an entry's bounding box contains $P$, we recursively search that child branch.
+    \item If we reach a leaf node, we retrieve the candidate Triangle ID.
+    \item We verify if the point lies strictly within the triangle, using the fact that we indicate its coordinates with its vertices (barycentric coordinates).
+\end{enumerate}
+
+\section{Performance Results}
+To evaluate the efficiency of our R-Tree implementation, we compared it against a "Naive Search".
+
+\textbf{Naive Search Definition}: This method iterates linearly through \textit{every single triangle} in the mesh ($O(N)$) to check if it contains the point. It serves as a baseline for correctness and performance.
+
+\textbf{Accuracy Test}: We generated 1000 random query points uniformly distributed within the bounding box of the entire mesh. For each point, we ran both the R-Tree Search and the Naive Search. The results were compared to ensure that both methods returned exactly the same triangle ID (or both returned "not found"), guaranteeing the correctness of our implementation.
+
+\textbf{Search Time Comparison} (1000 queries on \texttt{mesh2-tp2.mesh}):
+\begin{itemize}
+    \item \textbf{R-Tree Search Time}: $\sim 0.000867$ seconds.
+    \item \textbf{Naive Search Time}: $\sim 0.022523$ seconds.
+    \item \textbf{Speedup}: The R-Tree is approximately \textbf{25.98x faster} than the naive approach.
+    \item \textbf{Absolute Difference}: The R-Tree saves $\sim 0.021$ seconds per 1000 queries.
+\end{itemize}
+Comparison results confirmed 100\% accuracy, meaning the R-Tree always found the same triangle as the naive search, as it should.
+
+\chapter{Visualizations}
+All visualizations in this project were generated using \textbf{Gnuplot}. The C program exports geometry data (triangles, boxes, points) into \texttt{.dat} text files, and generates corresponding \texttt{.gp} scripts to render them. The mesh used for these visualizations is \texttt{mesh2-tp2.mesh}, which was provided in the \textbf{TP2} of the course.
+
+\section{R-Tree Visualization}
+We first can see the figure \ref{fig:viz_overview} which shows the overall structure of the R-Tree and the search result for a single point, highlighting the found triangle.
+To better understand the tree structure, we next visualize the levels. This visualization helps confirm that the tree is balanced and that nodes properly partition the space. Inspection of several consecutive levels reveals how parent nodes include their children.
+
+\subsection*{Why 3 rectangles at the root?}
+In our visualization of \texttt{mesh2-tp2.mesh}, at the Root (Level 0) we can see exactly 3 rectangles (branches) that contain level 1 nodes (see Figure \ref{fig:level01}).
+This observation is a direct mathematical result of the \textbf{max branching factor} (\texttt{MAXCARD}) defined earlier (21 branches per node) and the total number of triangles. 
+
+For the mesh \texttt{mesh2-tp2.mesh} with 780 triangles:
+\begin{enumerate}
+    \item \textbf{Leaf Level (Level 2)}: The 780 triangles are stored in 50 leaf nodes.
+    \[
+    \frac{780 \textrm{ triangles}}{50 \textrm{ nodes}} = 15.6 \textrm{ avg items/node} \quad (\approx 74\% \textrm{ fill})
+    \]
+    
+    \item \textbf{Parent Level (Level 1)}: These 50 Leaf Nodes are indexed by their parents.
+    \[
+    \frac{50 \textrm{ children}}{21 \textrm{ max capacity}} \Rightarrow \lceil 2.38 \rceil = 3 \textrm{ Parent Nodes}
+    \]
+    The 50 children are distributed across 3 parent nodes (avg 16.6 children/node).
+
+    \item \textbf{Root Level (Level 0)}: The Root acts as the parent for these 3 Level 1 nodes. Since 3 fits easily into the Root (capacity 21), the Root has exactly \textbf{3 branches}.
+\end{enumerate}
+So, the "3 rectangles" effectively divide the entire mesh into 3 large spatial partitions.
+
+\vspace{0.3cm}
+\noindent\textbf{Remark on Insertion Strategy}:
+The shape of these partitions is not random. The algorithm chooses to place each new triangle in the branch that would require the \textbf{smallest increase in MBR area}. This \textit{Quadratic Split} strategy is crucial for keeping the bounding boxes as small and compact as possible, minimizing overlap and ensuring the efficient structure we see in the visualizations.
+
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=1.0\textwidth]{visualization_overview.png}
+    \caption{Overview: R-Tree Nodes (Light Red), Found Triangle (Magenta), Query Point (Green). The mesh is shown in Blue.}
+    \label{fig:viz_overview}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=1.0\textwidth]{visualization_levels_legend.png}
+    \caption{All R-Tree Levels overlaid. Different colors represent different depths.}
+    \label{fig:viz_levels}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.8\textwidth]{viz_level_0_1.png}
+    \caption{Level 0 (Root, Red) containing Level 1 (Children, Blue).}
+    \label{fig:level01}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.8\textwidth]{viz_level_1_2.png}
+    \caption{Level 1 (Parent, Red) containing Level 2 (Children, Blue).}
+    \label{fig:level12}
+\end{figure}
+
+
+\appendix
+
+\chapter{How to Build and Run}
+
+This section details the steps to compile and execute the project from scratch.
+
+\section*{1. Point Location Part}
+To build the project and run the point location search:
+
+\begin{enumerate}
+    \item \textbf{Configuration (Optional)}:
+    Before running the program, you can specify the coordinates of the query point in a file named \texttt{what\_query\_point.dat} in the project root directory. The file should contain two floating point numbers separated by a space (e.g., \texttt{0.1 0.1}). If the file is missing, the default coordinates $(0,0)$ will be used.
+
+    \item \textbf{Build the project}:
+    \begin{verbatim}
+    cmake -S . -B build
+    cmake --build build
+    \end{verbatim}
+    This will compile the source code and link it with the R-Tree library.
+    
+    \item \textbf{Run the executable}:
+    \begin{verbatim}
+    ./build/RTreeRUN meshes/<mesh_name> <number_of_queries>
+    \end{verbatim}
+    Example:
+    \begin{verbatim}
+    ./build/RTreeRUN meshes/mesh2-tp2.mesh 1000
+    \end{verbatim}
+    This command loads the mesh from the \texttt{meshes/} folder and runs the specified number of random queries.
+\end{enumerate}
+
+\section*{2. Visualization Part}
+During the execution of \texttt{RTreeRUN}, the program automatically generates several \texttt{.dat} data files and \texttt{.gp} Gnuplot scripts in the \texttt{plots/} directory. To generate the visualization images (PNG):
+\begin{enumerate}
+    \item \textbf{Run Gnuplot}:
+    \begin{verbatim}
+    cd plots
+    gnuplot *.gp
+    \end{verbatim}
+    This will execute all generated scripts inside the \texttt{plots/} folder.
+    
+    \item \textbf{Output}:
+    The images will be created in the \texttt{plots/} directory.
+    \begin{itemize}
+        \item \texttt{visualization\_overview.png}
+        \item \texttt{visualization\_levels\_legend.png}
+        \item \texttt{viz\_level\_X\_Y.png} (for each pair of start/end levels)
+    \end{itemize}
+\end{enumerate}
+
+
+
+\chapter{What about Greenland?}
+
+We also tested our implementation on a much larger dataset: the \texttt{greenland.mesh} file.
+This mesh contains 66,425 vertices and 131,189 triangles.
+It can be found in the medit mesh format at: \url{https://people.sc.fsu.edu/~jburkardt/data/medit/medit.html}.
+
+\section*{Performance}
+Running 1000 random queries on this large mesh produced the following results:
+\begin{itemize}
+    \item \textbf{R-Tree Search Time}: $\sim 0.0013$ seconds.
+    \item \textbf{Naive Search Time}: $\sim 0.5058$ seconds.
+    \item \textbf{Speedup}: \textbf{382.04x}.
+\end{itemize}
+The R-Tree demonstrates massive scalability, maintaining sub-millisecond query times even as the dataset has grown significantly.
+
+\section*{Visualizations}
+We generated visualizations and locate \textit{Nuuk}, the capital of Greenland. Approximate coordinates: ($280, 600$).  
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=1.0\textwidth]{greenland_overview.png}
+    \caption{Greenland Mesh with R-Tree Structure and Query Point at Nuuk ($280, 600$).}
+    \label{fig:greenland_overview}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=1.0\textwidth]{greenland_levels_legend.png}
+    \caption{All R-Tree Levels for Greenland (Depth 5).}
+    \label{fig:greenland_levels}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.8\textwidth]{greenland_level_0_1.png}
+    \caption{Greenland: Level 0 (Root, Red) containing Level 1 (Child, Blue).}
+    \label{fig:greenland_level01}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.8\textwidth]{greenland_level_1_2.png}
+    \caption{Greenland: Level 1 (Parent, Red) containing Level 2 (Child, Blue).}
+    \label{fig:greenland_level12}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.8\textwidth]{greenland_level_2_3.png}
+    \caption{Greenland: Level 2 (Parent, Red) containing Level 3 (Child, Blue).}
+    \label{fig:greenland_level23}
+\end{figure}
+
+\begin{figure}[h!]
+    \centering
+    \includegraphics[width=0.8\textwidth]{greenland_level_3_4.png}
+    \caption{Greenland: Level 3 (Parent, Red) containing Level 4 (Child, Blue).}
+    \label{fig:greenland_level34}
+\end{figure}
+
+\end{document}
